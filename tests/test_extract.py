@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from conftest import SLUG, SOURCE
+
 from slides2anki.extract import normalize, strip_chrome
 from slides2anki.prep import prep
 from slides2anki.workspace import Workspace
@@ -18,18 +20,21 @@ def test_prep_extracts_and_writes_tasks(workspace: Path) -> None:
     ws = Workspace(workspace)
     result = prep(ws)
     doc = result.files[0].doc
-    assert doc.source == "01_graphs.pdf"
+    assert [i.doc.source for i in result.files] == [SOURCE]
     assert len(doc.pages) == 4
     assert "Breadth-first search" in doc.pages[1]
     assert doc.sparse == [3]
-    assert (workspace / ".slides2anki/pages/01-graphs/p003.jpg").is_file()
+    assert (workspace / f".cache/pages/{SLUG}/p003.jpg").is_file()
     assert result.outline_task
-    task = (workspace / ".slides2anki/tasks/cards-01-graphs.md").read_text()
+    task = (workspace / f".cache/tasks/cards-{SLUG}.md").read_text()
     assert doc.short_sha in task
     assert "p003.jpg" in task
     assert "[p2] Breadth-first search" in task
     assert "TODO" not in task
-    assert (workspace / ".slides2anki/TODO.md").is_file()
+    assert result.ignored == ["Exercises/sheet01.pdf"]
+    outline = (workspace / ".cache/tasks/outline.md").read_text()
+    assert "Week 1: Graph Search" in outline
+    assert (workspace / "TODO.md").is_file()
 
 
 def test_prep_is_incremental(workspace: Path) -> None:

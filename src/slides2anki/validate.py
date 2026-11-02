@@ -34,7 +34,9 @@ def integrity(ws: Workspace, cf: CardFile) -> list[Issue]:
     issues: list[Issue] = []
     doc = load_document(ws, cf.slug)
     if doc is None:
-        return [Issue(f"no extracted slides for {cf.slug!r}; check slides/ and run prep", cf.label)]
+        return [
+            Issue(f"no slide PDF for {cf.slug!r} (moved, renamed or deleted?); run prep", cf.label)
+        ]
     if doc.source != cf.source:
         issues.append(Issue(f"source {cf.source!r} should be {doc.source!r}", cf.label))
     if cf.source_hash != doc.short_sha:

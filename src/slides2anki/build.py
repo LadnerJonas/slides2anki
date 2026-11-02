@@ -8,8 +8,9 @@ import genanki
 from slides2anki import render
 from slides2anki.cards import Card, CardFile, ChoiceCard, OpenCard
 from slides2anki.config import Labels
-from slides2anki.extract import page_image, slugify
+from slides2anki.extract import page_image
 from slides2anki.outline import Outline
+from slides2anki.sources import slugify
 from slides2anki.workspace import Workspace
 
 CSS = """

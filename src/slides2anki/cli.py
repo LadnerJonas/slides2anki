@@ -1,19 +1,22 @@
+import os
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from slides2anki.build import build as build_deck
 from slides2anki.checks import builtin_checks, load_custom_checks
-from slides2anki.config import CardType, Checks, Course
+from slides2anki.config import CardType, Checks, Course, Sources
 from slides2anki.outline import Outline
 from slides2anki.prep import agents_md, scan
 from slides2anki.prep import prep as run_prep
+from slides2anki.sources import context_candidates, discover, folder_groups, walk
 from slides2anki.validate import Report
 from slides2anki.validate import validate as run_validate
-from slides2anki.workspace import CONFIG_NAME, Workspace, WorkspaceError
+from slides2anki.workspace import CONFIG_NAME, DEFAULT_DIR, Workspace, WorkspaceError
 
 app = typer.Typer(
     help="Turn lecture slides into Anki decks with the AI coding CLI of your choice.",
@@ -22,8 +25,10 @@ app = typer.Typer(
 )
 console = Console()
 
-PASTE_FIRST = "Follow .slides2anki/TODO.md. Show me the outline before writing cards."
-PASTE = "Follow .slides2anki/TODO.md"
+PASTE_FIRST = "Follow TODO.md. Show me the outline before writing cards."
+PASTE = "Follow TODO.md"
+DEFAULT_SLIDES = Sources().slides
+MAX_CANDIDATES = 15
 
 EXAMPLE_CHECK = """\
 # Files starting with "_" are ignored. Rename to e.g. question_length.py to enable.
@@ -102,9 +107,85 @@ def _ask_rules() -> list[str]:
     return rules
 
 
+def _choose_sources(base: Path, skip: Path) -> tuple[list[str], list[str]]:
+    files = list(walk(base, skip))
+    pdfs = [f for f in files if f.lower().endswith(".pdf")]
+    slides, context = list(DEFAULT_SLIDES), []
+    if not pdfs:
+        console.print(
+            "\n[yellow]No PDFs found yet.[/] Add them anywhere in the lecture folder later."
+        )
+    groups = folder_groups(pdfs)
+    if len(groups) > 1:
+        console.print(f"\n[bold]Found {len(pdfs)} PDFs[/] in {base}:")
+        for i, g in enumerate(groups, 1):
+            console.print(f"  {i}  {escape(g.label)}  [dim]{g.count}[/]")
+        picked = _pick_numbers(
+            "Make cards from which folders? Numbers or 'all'", len(groups), default="all"
+        )
+        if len(picked) < len(groups):
+            slides = [groups[i].pattern for i in picked]
+            rest = [g for i, g in enumerate(groups) if i not in picked]
+            console.print("\n[bold]Context only[/] (e.g. past exams, module description):")
+            for i, g in enumerate(rest, 1):
+                console.print(f"  {i}  {escape(g.label)}")
+            chosen = _pick_numbers(
+                "Use which as context? Numbers or 'none'", len(rest), default="none"
+            )
+            context = [rest[i].pattern for i in chosen]
+    if candidates := context_candidates(files):
+        shown = candidates[:MAX_CANDIDATES]
+        console.print(
+            "\n[bold]Course pages and notes[/] (help to structure topics, e.g. saved Moodle page):"
+        )
+        for i, c in enumerate(shown, 1):
+            console.print(f"  {i}  {escape(c)}")
+        if len(candidates) > len(shown):
+            console.print(
+                f"  [dim]… {len(candidates) - len(shown)} more, add them in course.toml[/]"
+            )
+        chosen = _pick_numbers(
+            "Use which as context? Numbers, 'all' or 'none'", len(shown), default="none"
+        )
+        context += [shown[i] for i in chosen]
+    return slides, context
+
+
+def _locate(lecture: Path, folder: str) -> tuple[Path, Path]:
+    base = lecture.resolve()
+    if not base.is_dir():
+        console.print(f"[red]{base} is not a folder.[/]")
+        raise typer.Exit(2)
+    root = (base / folder).resolve()
+    if root == base or not root.is_relative_to(base):
+        console.print("[red]--dir must name a subfolder of the lecture folder.[/]")
+        raise typer.Exit(2)
+    if (root / CONFIG_NAME).exists():
+        console.print(f"[red]{root / CONFIG_NAME} already exists.[/]")
+        raise typer.Exit(1)
+    return base, root
+
+
+def _create(root: Path, course: Course) -> Workspace:
+    ws = Workspace(root)
+    for directory in (ws.context, ws.cards, ws.checks):
+        directory.mkdir(parents=True, exist_ok=True)
+    course.save(ws.config_file)
+    (root / "AGENTS.md").write_text(agents_md(), "utf-8")
+    for alias in ("CLAUDE.md", "GEMINI.md"):
+        (root / alias).write_text("@AGENTS.md\n", "utf-8")
+    (ws.checks / "_example.py").write_text(EXAMPLE_CHECK, "utf-8")
+    return ws
+
+
 @app.command()
 def init(
-    directory: Annotated[Path, typer.Argument(help="Course folder to create or use")] = Path(),
+    lecture: Annotated[
+        Path, typer.Argument(help="Lecture folder with your slides (any structure)")
+    ] = Path(),
+    folder: Annotated[
+        str, typer.Option("--dir", help="Name of the slides2anki folder inside it")
+    ] = DEFAULT_DIR,
     name: Annotated[str | None, typer.Option(help="Course name, used as the root deck")] = None,
     language: Annotated[str | None, typer.Option(help="Language of the cards")] = None,
     card_type: Annotated[
@@ -117,13 +198,16 @@ def init(
         list[str] | None, typer.Option("--check", help="Check to enable, or 'all'")
     ] = None,
     rule: Annotated[list[str] | None, typer.Option("--rule", help="Own rule for the AI")] = None,
+    slides: Annotated[
+        list[str] | None, typer.Option("--slides", help="Glob for slide PDFs, e.g. 'Lectures/**'")
+    ] = None,
+    context: Annotated[
+        list[str] | None, typer.Option("--context", help="Glob for context files")
+    ] = None,
     no_input: Annotated[bool, typer.Option("--no-input", help="Never prompt")] = False,
 ) -> None:
-    """Create a course workspace (asks a few questions)."""
-    root = directory.resolve()
-    if (root / CONFIG_NAME).exists():
-        console.print(f"[red]{root / CONFIG_NAME} already exists.[/]")
-        raise typer.Exit(1)
+    """Set up slides2anki in a lecture folder. Only its own subfolder is ever written."""
+    base, root = _locate(lecture, folder)
 
     def missing(flag: str) -> typer.Exit:
         console.print(f"[red]--{flag} is required with --no-input[/]")
@@ -134,7 +218,9 @@ def init(
             return value
         return default if no_input else _ask(label, default=default)
 
-    name = need(name, "Course name", root.name)
+    console.print(f"Lecture folder: [bold]{base}[/] (read only)")
+    console.print(f"slides2anki folder: [bold]{root}[/]\n")
+    name = need(name, "Course name", base.name)
     if language is None and no_input:
         raise missing("language")
     language = language or _ask("Card language (e.g. English, German)", required=True)
@@ -144,6 +230,10 @@ def init(
         raise missing("type")
     else:
         types = _choose_types()
+    if slides is None and context is None and not no_input:
+        slide_globs, context_globs = _choose_sources(base, root)
+    else:
+        slide_globs, context_globs = slides or list(DEFAULT_SLIDES), context or []
     if style is None and not no_input:
         console.print(
             "\n[dim]Describe the card mix or focus in your own words, e.g. 'mostly single choice, "
@@ -168,23 +258,19 @@ def init(
         exam=exam,
         review_rules=rules,
         checks=Checks(enabled=checks),
+        sources=Sources(
+            root=os.path.relpath(base, root).replace(os.sep, "/"),
+            slides=slide_globs,
+            context=context_globs,
+        ),
     )
-    ws = Workspace(root)
-    for folder in (ws.slides, ws.context, ws.cards, ws.checks):
-        folder.mkdir(parents=True, exist_ok=True)
-    course.save(ws.config_file)
-    (root / "AGENTS.md").write_text(agents_md(), "utf-8")
-    for alias in ("CLAUDE.md", "GEMINI.md"):
-        (root / alias).write_text("@AGENTS.md\n", "utf-8")
-    (ws.checks / "_example.py").write_text(EXAMPLE_CHECK, "utf-8")
-
-    console.print(f"\n[green]Created course workspace in {root}[/]\n")
-    console.print("Next:")
+    found = discover(_create(root, course))
+    console.print(f"\n[green]Created {root}[/] ({len(found.slides)} slide PDFs found)\n")
+    console.print("Next: run [bold]slides2anki prep[/] (anywhere in the lecture folder).")
     console.print(
-        "  1. Put the lecture PDFs into [bold]slides/[/] (any file names, subfolders are fine)"
+        "[dim]New PDFs anywhere in the lecture folder are picked up on the next prep; "
+        "which files count is set under \\[sources] in course.toml.[/]"
     )
-    console.print("  2. Optional: save the course page or syllabus into [bold]context/[/]")
-    console.print("  3. Run [bold]slides2anki prep[/]")
 
 
 @app.command()
@@ -193,22 +279,34 @@ def prep() -> None:
     ws = _workspace()
     with console.status("Extracting slides…"):
         result = run_prep(ws)
+    if result.ignored:
+        sample = ", ".join(escape(r) for r in result.ignored[:3]) + (
+            ", …" if len(result.ignored) > 3 else ""
+        )
+        console.print(
+            f"[dim]{len(result.ignored)} PDF(s) not matched by \\[sources] in course.toml: "
+            f"{sample}[/]"
+        )
     if not result.files:
-        console.print("[yellow]No PDFs in slides/ yet.[/]")
+        console.print(f"[yellow]No slide PDFs found in {ws.base}.[/]")
         return
     for info in result.files:
         if info.extracted:
             extra = f", {len(info.doc.sparse)} without text" if info.doc.sparse else ""
-            console.print(f"  extracted {info.doc.source} ({len(info.doc.pages)} pages{extra})")
+            console.print(
+                f"  extracted {escape(info.doc.source)} ({len(info.doc.pages)} pages{extra})"
+            )
     tasks = int(result.outline_task) + len(result.card_tasks)
     if not tasks:
         console.print("[green]Everything is up to date.[/] Run [bold]slides2anki build[/].")
         return
-    console.print(f"\n{tasks} task(s) written to [bold]{ws.rel(ws.todo)}[/].")
     first_run = result.outline_task and not ws.outline_file.exists()
-    console.print(
-        "\nPaste this into your AI CLI (claude, codex, gemini, …) started in this folder:\n"
+    here = Path(os.path.relpath(ws.root))
+    where = (
+        "this folder" if here == Path() else f"[bold]{here.as_posix()}/[/] (cd {here.as_posix()})"
     )
+    console.print(f"\n{tasks} task(s) written to [bold]{ws.rel(ws.todo)}[/].")
+    console.print(f"\nStart your AI CLI (claude, codex, gemini, …) in {where} and paste:\n")
     console.print(f"  [bold cyan]{PASTE_FIRST if first_run else PASTE}[/]\n")
     console.print("Afterwards run [bold]slides2anki build[/].")
 
@@ -264,13 +362,13 @@ def status() -> None:
     report = run_validate(ws)
     counts = {cf.slug: len(cf.cards) for cf in report.files}
     table = Table("File", "Pages", "No text", "Topic", "Cards", "Status")
-    infos = scan(ws)
+    infos, ignored = scan(ws)
     for info in infos:
         doc = info.doc
         topic = outline.topic_of(doc.source)
         style = {"done": "green", "stale": "yellow", "new": "red"}[info.status]
         table.add_row(
-            doc.source,
+            escape(doc.source),
             str(len(doc.pages)),
             str(len(doc.sparse) or ""),
             f"{topic[0]:02} {topic[1].title}" if topic else "[red]unassigned[/]",
@@ -280,6 +378,8 @@ def status() -> None:
     console.print(table)
     if missing := outline.missing([i.doc.source for i in infos]):
         console.print(f"[yellow]outline.toml lists missing files: {', '.join(missing)}[/]")
+    if ignored:
+        console.print(f"[dim]{len(ignored)} PDF(s) not matched by \\[sources] in course.toml.[/]")
     console.print(
         f"{len(report.issues)} validation issue(s)."
         if report.issues
@@ -301,4 +401,4 @@ def list_checks() -> None:
     console.print(table)
     for issue in issues:
         console.print(f"[red]✗[/] {issue}")
-    console.print("[dim]Enable built-in checks in course.toml under [checks].enabled.[/]")
+    console.print("[dim]Enable built-in checks in course.toml under \\[checks].enabled.[/]")

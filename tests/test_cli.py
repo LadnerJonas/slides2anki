@@ -3,7 +3,7 @@ import sqlite3
 import zipfile
 from pathlib import Path
 
-from conftest import single, write_cards
+from conftest import SOURCE, single, write_cards
 from typer.testing import CliRunner
 
 from slides2anki.cli import app
@@ -12,10 +12,11 @@ from slides2anki.cli import app
 def test_full_workflow(workspace: Path, runner: CliRunner) -> None:
     result = runner.invoke(app, ["prep"])
     assert result.exit_code == 0, result.output
-    assert "Follow .slides2anki/TODO.md" in result.output
+    assert "Follow TODO.md" in result.output
+    assert "cd slides2anki" in result.output
 
     (workspace / "outline.toml").write_text(
-        '[[topics]]\ntitle = "Graph Search"\nfiles = ["01_graphs.pdf"]\n'
+        f'[[topics]]\ntitle = "Graph Search"\nfiles = ["{SOURCE}"]\n'
     )
     cards = [single(i, "ABCD"[i % 4]) for i in range(4)]
     cards.append(
@@ -52,7 +53,7 @@ def test_full_workflow(workspace: Path, runner: CliRunner) -> None:
         names = z.namelist()
         media = json.loads(z.read("media"))
         z.extract("collection.anki2", workspace)
-    assert "s2a_01-graphs_p002.jpg" in media.values()
+    assert "s2a_lectures-week-1-01-graphs_p002.jpg" in media.values()
     assert len(names) == 3
     db = sqlite3.connect(workspace / "collection.anki2")
     assert db.execute("select count(*) from notes").fetchone()[0] == 6

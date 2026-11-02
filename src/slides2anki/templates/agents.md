@@ -1,10 +1,13 @@
 # slides2anki workspace
 
-This folder turns lecture slides into an Anki deck. The `slides2anki` CLI does the deterministic work (PDF text extraction, page images, task files, validation, deck building). You, the AI assistant, write the outline and the cards.
+This folder turns the lecture slides of the surrounding lecture folder into an Anki deck. The `slides2anki` CLI does the deterministic work (PDF text extraction, page images, task files, validation, deck building). You, the AI assistant, write the outline and the cards.
 
 ## Start here
-- Pending work is listed in `.slides2anki/TODO.md`. Each task file in `.slides2anki/tasks/` is self-contained.
+- Pending work is listed in `TODO.md`. Each task file in `.cache/tasks/` is self-contained.
 - If `TODO.md` is missing or outdated, run `slides2anki prep` first.
+
+## Safety
+The lecture folder around this one belongs to the user. Never create, change, move or delete anything outside this folder. Everything you need from the slides is in the task files and `.cache/pages/`.
 
 ## Files you may write
 | Path | Purpose |
@@ -12,9 +15,9 @@ This folder turns lecture slides into an Anki deck. The `slides2anki` CLI does t
 | `outline.toml` | topics and the slide files belonging to each; one Anki subdeck per topic |
 | `cards/<slug>.json` | the cards for one slide file |
 | `checks/*.py` | custom deterministic checks |
-| `course.toml` | only when the user asks to change course settings |
+| `course.toml` | only when the user asks to change course settings, e.g. which files count as slides (`[sources]`) |
 
-Never modify `slides/`, `context/` or `.slides2anki/` by hand.
+Never modify `context/` or `.cache/` by hand.
 
 ## Commands
 - `slides2anki prep`: extract new or changed slides and write tasks

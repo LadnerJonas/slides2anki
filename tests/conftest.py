@@ -54,13 +54,30 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
+SOURCE = "Lectures/Week 1/01_graphs.pdf"
+SLUG = "lectures-week-1-01-graphs"
+
+
 @pytest.fixture
-def workspace(tmp_path: Path, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> Path:
+def lecture(tmp_path: Path) -> Path:
+    """An unstructured lecture folder: nested slides, an exercise sheet and a saved course page."""
+    base = tmp_path / "Algorithms WS25"
+    make_pdf(base / SOURCE, LECTURE)
+    make_pdf(base / "Exercises" / "sheet01.pdf", [["Exercise 1", "Run BFS on the graph"]])
+    (base / "Course Page.html").parent.mkdir(parents=True, exist_ok=True)
+    (base / "Course Page.html").write_text("<h1>Week 1: Graph Search</h1>", "utf-8")
+    (base / "Course Page_files").mkdir()
+    (base / "Course Page_files" / "junk.pdf").write_bytes(b"not a pdf")
+    return base
+
+
+@pytest.fixture
+def workspace(lecture: Path, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> Path:
     result = runner.invoke(
         app,
         [
             "init",
-            str(tmp_path),
+            str(lecture),
             "--no-input",
             "--name",
             "Algorithms",
@@ -74,12 +91,15 @@ def workspace(tmp_path: Path, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
             "open",
             "--check",
             "all",
+            "--slides",
+            "Lectures/**/*.pdf",
+            "--context",
+            "*.html",
         ],
     )
     assert result.exit_code == 0, result.output
-    make_pdf(tmp_path / "slides" / "01_graphs.pdf", LECTURE)
-    monkeypatch.chdir(tmp_path)
-    return tmp_path
+    monkeypatch.chdir(lecture)
+    return lecture / "slides2anki"
 
 
 QUESTIONS = [
@@ -112,10 +132,10 @@ def single(i: int, correct: str = "A", **extra) -> dict:
 
 
 def write_cards(ws: Path, cards: list[dict], source_hash: str | None = None) -> Path:
-    doc = json.loads((ws / ".slides2anki/pages/01-graphs/document.json").read_text())
-    path = ws / "cards" / "01-graphs.json"
+    doc = json.loads((ws / f".cache/pages/{SLUG}/document.json").read_text())
+    path = ws / "cards" / f"{SLUG}.json"
     payload = {
-        "source": "01_graphs.pdf",
+        "source": SOURCE,
         "source_hash": source_hash or doc["sha"][:16],
         "cards": cards,
     }

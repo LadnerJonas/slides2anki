@@ -35,6 +35,13 @@ class Labels(BaseModel):
     multi: str = "Select all that apply"
 
 
+class Sources(BaseModel):
+    root: str = ".."
+    slides: list[str] = ["**/*.pdf"]
+    context: list[str] = []
+    exclude: list[str] = []
+
+
 class Course(BaseModel):
     name: str
     language: str
@@ -46,6 +53,7 @@ class Course(BaseModel):
     min_page_chars: int = 30
     labels: Labels = Labels()
     checks: Checks = Checks()
+    sources: Sources = Sources()
 
     @classmethod
     def load(cls, path: Path) -> Self:

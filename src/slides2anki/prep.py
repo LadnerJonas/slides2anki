@@ -7,8 +7,9 @@ from string import Template
 
 from slides2anki.cards import peek_source_hash
 from slides2anki.config import CardType, Course, Labels
-from slides2anki.extract import Document, context_texts, extract_slides, page_image, slide_files
+from slides2anki.extract import Document, context_texts, extract_slides, page_image
 from slides2anki.outline import Outline
+from slides2anki.sources import discover
 from slides2anki.workspace import Workspace
 
 PREVIEW_CHARS = 1500
@@ -71,6 +72,7 @@ class FileInfo:
 @dataclass(frozen=True)
 class PrepResult:
     files: list[FileInfo]
+    ignored: list[str]
     outline_task: bool
     card_tasks: list[Document]
 
@@ -199,15 +201,16 @@ def outline_task(ws: Workspace, docs: list[Document], outline: Outline) -> str:
         keep=keep,
         language=ws.course.language,
         current=f"```toml\n{current}\n```" if current else "(none yet)",
-        context=context or "(none: no files in context/)",
+        context=context or "(none)",
         files="\n\n".join(previews),
     )
 
 
-def scan(ws: Workspace) -> list[FileInfo]:
+def scan(ws: Workspace) -> tuple[list[FileInfo], list[str]]:
+    found = discover(ws)
     out = []
-    for path in slide_files(ws):
-        doc, extracted = extract_slides(ws, path)
+    for src in found.slides:
+        doc, extracted = extract_slides(ws, src)
         card_hash = peek_source_hash(ws.card_file(doc.slug))
         if card_hash is None:
             status = FileStatus.NEW
@@ -216,11 +219,11 @@ def scan(ws: Workspace) -> list[FileInfo]:
         else:
             status = FileStatus.DONE
         out.append(FileInfo(doc, status, extracted))
-    return out
+    return out, found.ignored
 
 
 def prep(ws: Workspace) -> PrepResult:
-    infos = scan(ws)
+    infos, ignored = scan(ws)
     docs = [i.doc for i in infos]
     outline = Outline.load(ws.outline_file)
     needs_outline = bool(outline.unassigned([d.source for d in docs]))
@@ -245,4 +248,4 @@ def prep(ws: Workspace) -> PrepResult:
         )
     else:
         ws.todo.unlink(missing_ok=True)
-    return PrepResult(infos, needs_outline, [i.doc for i in pending])
+    return PrepResult(infos, ignored, needs_outline, [i.doc for i in pending])

@@ -3,13 +3,14 @@
 Turn the lecture slides you get every week into an Anki deck, with one subdeck per topic. The CLI does the deterministic work. Your AI coding CLI writes the cards: Claude Code, Codex, Gemini CLI, Cursor, Copilot, or any other agent that can read and write files.
 
 ```
-slides/*.pdf ──► slides2anki prep ──► AI CLI ──► slides2anki build ──► deck.apkg ──► Anki
-                 text per page,       writes      validates,
-                 page images,         outline +   renders cards
-                 task files           cards       + figures
+your lecture folder ──► slides2anki prep ──► AI CLI ──► slides2anki build ──► deck.apkg ──► Anki
+(any structure, read    text per page,       writes      validates,
+ only)                  page images,         outline +   renders cards
+                        task files           cards       + figures
 ```
 
-- **Any course:** works from the file list, an optional course page or syllabus, and the slides themselves.
+- **Any course, any folder:** run it inside the folder where your slides already are, however deeply nested. It only ever writes into its own `slides2anki/` subfolder.
+- **Topics from what you have:** folder and file names, an optional saved course page or syllabus, and the slides themselves.
 - **Incremental:** only new or changed PDFs produce tasks, and cards for older lectures stay untouched.
 - **Any model:** no API keys. You use the AI CLI and subscription you already have.
 - **Your card style:** single choice, multiple choice and free text (question, flip, answer), in any language, mixed the way you describe.
@@ -27,30 +28,45 @@ uv tool install git+https://github.com/LadnerJonas/slides2anki
 
 ## Quick start
 
-```bash
-slides2anki init my-course
+Open a terminal in the folder where you keep the course material, for example:
+
+```
+Algorithms WS25/
+├── Lectures/
+│   ├── 01 Introduction.pdf
+│   └── Week 2/02_graphs.pdf
+├── Exercises/sheet01.pdf
+├── Old exams/2024.pdf
+└── Moodle course page.html
 ```
 
-`init` asks for the course name, the card language, the card types, your style in your own words, and which checks to enable. Everything ends up in `my-course/course.toml`, which you can edit later.
+```bash
+cd "Algorithms WS25"
+slides2anki init
+```
+
+`init` asks for the course name, the card language, the card types, your style in your own words, and which checks to enable. It lists the PDFs it found per folder, so you can pick which folders become cards (e.g. `Lectures/`) and which are context only (e.g. `Old exams/`), and it offers saved course pages (HTML, Markdown, text) as context for the topic structure. Everything ends up in `slides2anki/course.toml`, which you can edit later.
 
 Then:
 
-1. Copy the lecture PDFs into `my-course/slides/` (any names, subfolders are fine).
-2. Optional: save the course page or syllabus (for example the Moodle course overview via *Save page as*) into `my-course/context/`. It is used to structure the topics.
-3. Prepare the tasks:
+1. Prepare the tasks (from anywhere inside the lecture folder):
 
    ```bash
-   cd my-course
    slides2anki prep
    ```
 
-4. Start your AI CLI in `my-course/` and paste the line `prep` prints:
+2. Start your AI CLI in the `slides2anki/` folder and paste the line `prep` prints:
+
+   ```bash
+   cd slides2anki
+   claude    # or codex, gemini, …
+   ```
 
    ```
-   Follow .slides2anki/TODO.md. Show me the outline before writing cards.
+   Follow TODO.md. Show me the outline before writing cards.
    ```
 
-5. Build the deck and import `decks/<course>.apkg` in Anki (*File → Import*):
+3. Build the deck and import `slides2anki/decks/<course>.apkg` in Anki (*File → Import*):
 
    ```bash
    slides2anki build
@@ -58,34 +74,49 @@ Then:
 
 ## Every week
 
-Put the new PDF into `slides/` and run:
+Download the new PDF anywhere into the lecture folder and run:
 
 ```bash
 slides2anki prep
 ```
 
-Paste `Follow .slides2anki/TODO.md` into your AI CLI, then:
+Paste `Follow TODO.md` into your AI CLI (started in `slides2anki/`), then:
 
 ```bash
 slides2anki build
 ```
 
-Re-importing the deck updates existing cards in place. New lectures are added to a fitting topic or get a new one.
+Re-importing the deck updates existing cards in place. New lectures are added to a fitting topic or get a new one. `prep` also tells you about PDFs that none of your folder patterns match.
 
-## Workspace
+## Layout
+
+Your files are only read. All output lives in one folder, so deleting `slides2anki/` removes every trace.
 
 ```
-my-course/
-├── course.toml        settings: language, card types, style, checks, rules
-├── outline.toml       topics → slide files (one subdeck per topic), written by the AI, editable
-├── slides/            your PDFs
-├── context/           optional: course page, syllabus, exam info (PDF, HTML, MD, TXT)
-├── cards/<file>.json  the cards per slide file: the source of truth, editable
-├── checks/*.py        your own checks
-├── decks/             the built .apkg
-├── AGENTS.md          instructions for the AI CLI (CLAUDE.md and GEMINI.md point to it)
-└── .slides2anki/      cache: extracted text, page images, tasks
+Algorithms WS25/            your lecture folder, any structure, never modified
+└── slides2anki/
+    ├── course.toml         settings: language, card types, style, checks, rules, sources
+    ├── outline.toml        topics → slide files (one subdeck per topic), written by the AI, editable
+    ├── TODO.md             pending tasks for the AI CLI (written by prep)
+    ├── context/            optional extra context: syllabus, exam info (PDF, HTML, MD, TXT)
+    ├── cards/<file>.json   the cards per slide file: the source of truth, editable
+    ├── checks/*.py         your own checks
+    ├── decks/              the built .apkg
+    ├── AGENTS.md           instructions for the AI CLI (CLAUDE.md and GEMINI.md point to it)
+    └── .cache/             extracted text, page images, task files
 ```
+
+Which files count is set in `course.toml`. Paths are relative to the lecture folder; `*` and `?` match within one folder, `**` across any number, case-insensitively:
+
+```toml
+[sources]
+root = ".."                              # the lecture folder, relative to slides2anki/
+slides = ["Lectures/**/*.pdf"]           # default: every PDF ("**/*.pdf")
+context = ["Old exams/**/*.pdf", "Moodle course page.html"]
+exclude = ["**/*solution*"]
+```
+
+Hidden folders, saved-page asset folders (`*_files/`) and `slides2anki/` itself are always skipped.
 
 Deck structure: `Course::01 Topic`, `Course::02 Topic`, …
 
@@ -149,11 +180,11 @@ def four_options(ctx: CheckContext):
 
 | Goal | Prompt for your AI CLI |
 |---|---|
-| First run | `Follow .slides2anki/TODO.md. Show me the outline before writing cards.` |
-| Weekly update | `Follow .slides2anki/TODO.md` |
-| More practice | `Add about 8 free-text cards to cards/05-dynamic-programming.json that ask to trace the recurrence on a small input. Then validate.` |
-| Change style | `Rewrite cards/03-*.json as multiple choice and add figures where a diagram is essential.` |
-| Exam alignment | `context/exam_2024.pdf is a past exam. Update style in course.toml to match its question types, then regenerate the cards for topics 1 to 4.` |
+| First run | `Follow TODO.md. Show me the outline before writing cards.` |
+| Weekly update | `Follow TODO.md` |
+| More practice | `Add about 8 free-text cards to cards/lectures-05-dynamic-programming.json that ask to trace the recurrence on a small input. Then validate.` |
+| Change style | `Rewrite cards/lectures-03-*.json as multiple choice and add figures where a diagram is essential.` |
+| Exam alignment | `Old exams/2024.pdf is a past exam. Update style in course.toml to match its question types, then regenerate the cards for topics 1 to 4.` |
 | New rule | `Every explanation must name the responsible algorithm. Add this as a check in checks/ and fix all cards it flags.` |
 | Review | `Review all cards in topic 2 for factual errors against the slides and fix them.` |
 | Restructure | `Split topic 3 in outline.toml into "Hashing" and "Search Trees".` |
@@ -162,8 +193,8 @@ def four_options(ctx: CheckContext):
 
 | Command | Does |
 |---|---|
-| `slides2anki init [DIR]` | create a course workspace (interactive; `--no-input` with flags for scripts) |
-| `slides2anki prep` | extract new or changed PDFs, write `.slides2anki/TODO.md` and task files |
+| `slides2anki init [LECTURE_DIR]` | create `slides2anki/` in the lecture folder (interactive; `--no-input` with flags such as `--slides`, `--context` for scripts) |
+| `slides2anki prep` | extract new or changed PDFs, write `TODO.md` and task files |
 | `slides2anki validate [FILES]` | check cards; exits with 1 on issues |
 | `slides2anki build` | write `decks/<course>.apkg` (refuses invalid cards unless `--force`) |
 | `slides2anki status` | files, topics, card counts, pending work |
@@ -173,7 +204,9 @@ def four_options(ctx: CheckContext):
 
 - **Editing:** edit `cards/*.json` directly or ask the AI CLI. Card ids are stable, so re-importing updates the existing notes and keeps your review history.
 - **Changed slides:** when a PDF changes, `prep` creates a task that keeps still-valid cards and their ids.
-- **Copyright:** lecture material is usually copyrighted. Don't publish `slides/`, `context/` or `.slides2anki/`.
+- **Moved or renamed PDFs** get a new card file; `validate` reports the orphaned old one, so the AI CLI can move its cards over or you delete it.
+- **Commands** work from anywhere inside the lecture folder; they find `slides2anki/` themselves.
+- **Copyright:** lecture material is usually copyrighted. Don't publish `context/`, `.cache/` or the deck if it contains slide images.
 - **Token use:** a 40-slide lecture is roughly 10k input tokens. Pages without text cost an image each.
 
 ## Development

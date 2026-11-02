@@ -1,6 +1,6 @@
 # Card task: $source
 
-Write `$card_path` for the slide file `slides/$source` ($page_count pages). Read only this task file and the page images it names; do not open the PDF.
+Write `$card_path` for the slide file `$source` in the lecture folder ($page_count pages). Read only this task file and the page images it names; do not open the PDF.
 $previous
 ## Course
 $course

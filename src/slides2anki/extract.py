@@ -8,6 +8,7 @@ from pathlib import Path
 import pypdfium2 as pdfium
 from pydantic import BaseModel
 
+from slides2anki.sources import Source, discover
 from slides2anki.workspace import Workspace
 
 RENDER_WIDTH = 1280
@@ -29,10 +30,6 @@ class Document(BaseModel):
 def file_sha(path: Path) -> str:
     with path.open("rb") as fh:
         return hashlib.file_digest(fh, "sha256").hexdigest()
-
-
-def slugify(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "x"
 
 
 def normalize(text: str) -> str:
@@ -72,24 +69,22 @@ def page_image(ws: Workspace, slug: str, page: int) -> Path:
     return ws.pages / slug / f"p{page:03}.jpg"
 
 
-def extract_slides(ws: Workspace, path: Path) -> tuple[Document, bool]:
+def extract_slides(ws: Workspace, src: Source) -> tuple[Document, bool]:
     """Return the cached document for a slide PDF, extracting it if new or changed."""
-    source = path.relative_to(ws.slides).as_posix()
-    slug = slugify(source.removesuffix(path.suffix))
-    out = ws.pages / slug
+    out = ws.pages / src.slug
     meta = out / "document.json"
-    sha = file_sha(path)
+    sha = file_sha(src.path)
     if meta.is_file():
         cached = Document.model_validate_json(meta.read_text("utf-8"))
-        if cached.sha == sha and cached.source == source:
+        if cached.sha == sha and cached.source == src.rel:
             return cached, False
     out.mkdir(parents=True, exist_ok=True)
     for stale in out.glob("p*.jpg"):
         stale.unlink()
-    pages = strip_chrome(list(pdf_pages(path, out)))
+    pages = strip_chrome(list(pdf_pages(src.path, out)))
     limit = ws.course.min_page_chars
     sparse = [i for i, text in enumerate(pages, 1) if len(text) < limit]
-    doc = Document(source=source, slug=slug, sha=sha, pages=pages, sparse=sparse)
+    doc = Document(source=src.rel, slug=src.slug, sha=sha, pages=pages, sparse=sparse)
     meta.write_text(doc.model_dump_json(indent=1), "utf-8")
     return doc, True
 
@@ -97,12 +92,6 @@ def extract_slides(ws: Workspace, path: Path) -> tuple[Document, bool]:
 def load_document(ws: Workspace, slug: str) -> Document | None:
     meta = ws.pages / slug / "document.json"
     return Document.model_validate_json(meta.read_text("utf-8")) if meta.is_file() else None
-
-
-def slide_files(ws: Workspace) -> list[Path]:
-    if not ws.slides.is_dir():
-        return []
-    return sorted(p for p in ws.slides.rglob("*") if p.suffix.lower() == ".pdf" and p.is_file())
 
 
 class _TextOnly(HTMLParser):
@@ -132,19 +121,26 @@ def html_text(html: str) -> str:
     return normalize("".join(parser.parts))
 
 
+def _read_context(path: Path) -> str | None:
+    match path.suffix.lower():
+        case ".pdf":
+            return "\n".join(pdf_pages(path))
+        case ".html" | ".htm":
+            return html_text(path.read_text("utf-8", errors="replace"))
+        case ".md" | ".txt":
+            return normalize(path.read_text("utf-8", errors="replace"))
+        case _:
+            return None
+
+
 def context_texts(ws: Workspace) -> dict[str, str]:
-    if not ws.context.is_dir():
-        return {}
+    """Context files from the workspace `context/` folder and the `[sources].context` patterns."""
+    own = sorted(p for p in ws.context.rglob("*") if p.is_file()) if ws.context.is_dir() else []
     out: dict[str, str] = {}
-    for path in sorted(ws.context.rglob("*")):
-        match path.suffix.lower():
-            case ".pdf":
-                text = "\n".join(pdf_pages(path))
-            case ".html" | ".htm":
-                text = html_text(path.read_text("utf-8", errors="replace"))
-            case ".md" | ".txt":
-                text = normalize(path.read_text("utf-8", errors="replace"))
-            case _:
-                continue
-        out[ws.rel(path)] = text
+    for path in own:
+        if (text := _read_context(path)) is not None:
+            out[ws.rel(path)] = text
+    for path in discover(ws).context:
+        if (text := _read_context(path)) is not None:
+            out[path.relative_to(ws.base).as_posix()] = text
     return out
