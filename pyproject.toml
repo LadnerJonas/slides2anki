@@ -1,0 +1,49 @@
+[project]
+name = "slides2anki"
+version = "0.1.0"
+description = "Turn weekly lecture slides into Anki decks with the AI coding CLI of your choice"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Jonas Ladner" }]
+requires-python = ">=3.12"
+keywords = ["anki", "flashcards", "lecture", "pdf", "llm", "study"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Education",
+]
+dependencies = [
+    "genanki>=0.13.1",
+    "markdown-it-py>=4.0",
+    "pillow>=11.0",
+    "pydantic>=2.11",
+    "pypdfium2>=5.0",
+    "rich>=14.0",
+    "tomli-w>=1.2",
+    "typer>=0.16",
+]
+
+[project.scripts]
+slides2anki = "slides2anki.cli:app"
+
+[dependency-groups]
+dev = ["pytest>=8.4", "ruff>=0.14", "ty>=0.0.1a20"]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.12"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF", "PTH", "PL", "N"]
+ignore = ["PLR2004", "PLR0913", "PLR0917", "PLC0415"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
